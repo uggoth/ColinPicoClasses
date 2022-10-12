@@ -2,6 +2,47 @@ import PicoRobotics
 import math
 import utime
 
+class Servo():
+    
+    def __init__(self,
+                 name,
+                 board,
+                 servo_no,
+                 max_rotation,
+                 min_rotation,
+                 park_position,
+                 transport_position):
+        self.name = name
+        self.board = board
+        self.servo_no = servo_no
+        self.max_rotation = max_rotation
+        self.min_rotation = min_rotation
+        self.park_position = park_position
+        self.transport_position = transport_position
+        self.current_position = self.park_position
+        self.start_position = self.current_position
+        self.target_position = self.current_position
+    
+    def park(self):
+        self.move_to(self.park_position)
+    
+    def transport(self):
+        self.move_to(self.transport_position)
+    
+    def move_to(self, new_position, speed=50):     # speed is from 1 to 100
+        delay = int(1000 / speed)
+        rotation = new_position - self.current_position
+        no_increments = int(math.fabs(rotation) / 3)
+        if no_increments < 1:
+            return
+        increment = rotation / no_increments
+        for i  in range(no_increments):
+            self.board.servoWrite(self.servo_no, self.current_position + (increment * i))
+            utime.sleep_ms(delay)
+        self.board.servoWrite(self.servo_no, new_position)
+        self.current_position = new_position
+
+
 class Motor():    
     def __init__(self, name):
         self.name = name
@@ -123,24 +164,22 @@ class DriveTrain():
         degrees = int (float(millimetres * self.degree_factor) / math.pow(speed, self.speed_exponent))
         return degrees
 
-class MyDriveTrain(DriveTrain):
-    
-    def __init__(self):
-        my_board = ThisBoard.board
-        self.left_side = Side([
-            KitronikMotor('FRONT_LEFT', my_board, 1, 'f', 'r'),
-            KitronikMotor('REAR_LEFT', my_board, 3, 'f', 'r')])
-        self.right_side = Side([
-            KitronikMotor('FRONT_RIGHT', my_board, 2, 'r', 'f'),
-            KitronikMotor('REAR_RIGHT', my_board, 4, 'r', 'f')])
-        super().__init__(self.left_side, self.right_side)
-        self.last_spin = ''
+class TypicalKitronikServo(Servo):
+    def __init__(self, my_board, servo_no=1):
+        super().__init__(name='Typical Servo',
+                 board=my_board,
+                 servo_no=servo_no,
+                 max_rotation=180,
+                 min_rotation=0,
+                 park_position=90,
+                 transport_position=90)
+    def up(self, speed=25):
+        self.move_to(new_position=90, speed=speed)
+    def down(self, speed=25):
+        self.move_to(new_position=159, speed=speed)
 
-class ThisBoard():
-
-    board = PicoRobotics.KitronikPicoRobotics()
-    
-    def __init__(self):
-        self.name = 'KITRONIK'
-
-ThisBoard()
+#####  For testing compilation
+if __name__ == "__main__":
+    print ('Kitronik_v03.py')
+    my_board = PicoRobotics.KitronikPicoRobotics()
+    test_servo = TypicalKitronikServo(my_board)
