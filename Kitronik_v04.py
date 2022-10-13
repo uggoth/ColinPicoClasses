@@ -42,6 +42,43 @@ class Servo():
         self.board.servoWrite(self.servo_no, new_position)
         self.current_position = new_position
 
+class Arm():
+    
+    steps = 20
+    duration = 2.0
+    
+    def __init__(self, name, board, shoulder_servo, bucket_servo):
+        self.board = board
+        self.name = name
+        self.shoulder_servo = shoulder_servo
+        self.bucket_servo = bucket_servo
+        self.poses = {}
+        self.poses['PARK'] = [[self.shoulder_servo,90],[self.bucket_servo,90]]
+        self.poses['UP'] = [[self.shoulder_servo,100],[self.bucket_servo,110]]
+        self.poses['DOWN'] = [[self.shoulder_servo,120],[self.bucket_servo,130]]
+    
+    def do_pose(self, pose_id, speed=50):  #  from 1 to 100
+        this_pose = self.poses[pose_id]
+        nservos = len(this_pose)
+        interval_ms = int((Arm.duration / float(speed)) * 1000.0)
+        for j in range(nservos):
+            servo = this_pose[j][0]
+            target = this_pose[j][1]
+            servo.start_position = servo.current_position
+            servo.target_position = target
+        for i in range(Arm.steps):
+            for j in range(nservos):
+                servo = this_pose[j][0]
+                target = servo.target_position
+                start = servo.start_position
+                new_position = start + ((float(target - start) / Arm.steps) * i)
+                self.board.servoWrite(servo.servo_no, new_position)
+                utime.sleep_ms(interval_ms)
+        for j in range(nservos):
+            servo = this_pose[j][0]
+            self.board.servoWrite(servo.servo_no, servo.target_position)
+            servo.current_position = servo.target_position
+
 
 class Motor():    
     def __init__(self, name):
@@ -165,10 +202,10 @@ class DriveTrain():
         return degrees
 
 class TypicalKitronikServo(Servo):
-    def __init__(self, my_board):
+    def __init__(self, my_board, servo_no=1):
         super().__init__(name='Typical Servo',
                  board=my_board,
-                 servo_no=1,
+                 servo_no=servo_no,
                  max_rotation=180,
                  min_rotation=0,
                  park_position=90,
@@ -179,5 +216,9 @@ class TypicalKitronikServo(Servo):
         self.move_to(new_position=159, speed=speed)
 
 #####  For testing compilation
-my_board = PicoRobotics.KitronikPicoRobotics()
-test_servo = TypicalKitronikServo(my_board)
+if __name__ == "__main__":
+    print ('Kitronik_v04.py')
+    test_board = PicoRobotics.KitronikPicoRobotics()
+    shoulder_servo = TypicalKitronikServo(test_board, 1)
+    bucket_servo = TypicalKitronikServo(test_board, 2)
+    test_arm = Arm('Front Loader', test_board, shoulder_servo, bucket_servo)

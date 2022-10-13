@@ -13,6 +13,7 @@ class GPIO():
                         'LED':'OUTPUT'}
     allocated = {}
     allocated_by_type = {}
+    allocated_str = ''
     for type_code in valid_type_codes:
         allocated_by_type[type_code] = {}
     
@@ -29,12 +30,21 @@ class GPIO():
         if self.pin_no in GPIO.allocated:
             print (self.pin_no,'already allocated')
             return
-        GPIO.allocated[self.pin_no] = self
-        GPIO.allocated_by_type[self.type_code][self.pin_no] = self
         self.name = name
         self.valid = True
         self.previous = 'UNKNOWN'
-
+        GPIO.allocated[self.pin_no] = self
+        GPIO.allocated_by_type[self.type_code][self.pin_no] = self
+        GPIO.allocated_str += str(self.pin_no) + ':' + self.name + ':' + str(self) + '\n\r'
+        
+    def str_allocated(self):
+        out_string = ''
+        for device in sorted(GPIO.allocated):
+            obj = GPIO.allocated[device]
+            out_string += ('{:02}'.format(device) + ' : ' +
+                            '{:18}'.format(obj.name) + ' : ' +
+                            str(obj) + "\n")
+        return out_string
 
 class Sensor(GPIO):
     
@@ -91,29 +101,32 @@ class Volts(Sensor):
             self.state = 'ON'
         return self.state
 
-class ThisVolts(Volts):
-    def __init__(self):
-        super().__init__(29, 'VIN')
-
 class USTrigger(Sensor):
     def __init__(self, pin_no, name):
         super().__init__(pin_no, 'US_TRIGGER', name)
-        self.pin = machine.Pin(pin_no, machine.Pin.OUT)
+        self.pin_no = pin_no
+        self.pin = machine.Pin(self.pin_no, machine.Pin.OUT)
+        self.valid = True
 
 class USEcho(Sensor):    
     def __init__(self, pin_no, name):
         super().__init__(pin_no, 'US_ECHO', name)
-        self.pin = machine.Pin(pin_no, machine.Pin.IN)
+        self.pin_no = pin_no
+        self.pin = machine.Pin(self.pin_no, machine.Pin.IN)
+        self.valid = True
 
 class HCSR04():
-    def __init__(self, name,
+    def __init__(self,
                  trigger_pin_no,
                  echo_pin_no,
+                 name,
                  critical_distance):
         self.type = 'HCSR04'
         self.name = name
-        self.trigger = USTrigger(trigger_pin_no, name + '_TRIGGER').pin
-        self.echo = USEcho(echo_pin_no, name + '_ECHO').pin
+        self.trigger_object = USTrigger(trigger_pin_no, name + '_TRIGGER')
+        self.trigger = self.trigger_object.pin
+        self.echo_object = USEcho(echo_pin_no, name + '_ECHO')
+        self.echo = self.echo_object.pin
         self.error_code = 0
         self.error_message = ""
         self.critical_distance = critical_distance
@@ -162,14 +175,6 @@ class HCSR04():
         self.last_distance_measured = self.distance
         return self.distance
 
-class ThisHCSR04(HCSR04):
-    def __init__(self):
-        super().__init__(name='FRONT_US',
-                 trigger_pin_no=19,
-                 echo_pin_no=20,
-                 critical_distance=100.0)
-
-
 class IRSensor(Sensor):
     def __init__(self, pin_no, name):
         super().__init__(pin_no, 'INFRA_RED', name)
@@ -185,13 +190,6 @@ class IRSensor(Sensor):
         else:
             self.state = 'UNKNOWN'
         return self.state
-
-
-class TheseIRSensors():
-    def __init__(self):
-        self.front_left_ir = IRSensor(18,'FRONT_LEFT_IR')
-        self.front_right_ir = IRSensor(22,'FRONT_RIGHT_IR')
-
 
 class Switch(Sensor):
     def __init__(self, pin_no, name):
@@ -210,21 +208,17 @@ class Switch(Sensor):
         return self.state
 
 
-class TheseSwitches():
-    def __init__(self):
-        DIP_1 = Switch(13,'DIP_1')
-        DIP_2 = Switch(12,'DIP_2')
-        DIP_3 = Switch(11,'DIP_3')
-
-
-class LED(GPIO):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'LED', name)
-        if not self.valid:
-            return
+class Output(GPIO):
+    def __init__(self, pin_no, name, type_code):
         self.pin_no = pin_no
         self.name = name
+        self.type_code = type_code
         self.pin = machine.Pin(pin_no, machine.Pin.OUT)
+        super().__init__(pin_no, type_code, name)
+
+class LED(Output):
+    def __init__(self, pin_no, name):
+        super().__init__(pin_no, name, 'LED')
     
     def on(self):
         self.pin.on()
@@ -267,80 +261,6 @@ class RGBLED():
         self.green_led.off()
         self.blue_led.off()
 
-class LeftHeadlight:
-    def __init__(self):
-        self.red = LED(10,'LEFT_RED')
-        self.green = LED(14,'LEFT_GREEN')
-        self.blue = LED(15,'LEFT_BLUE')
-        self.headlight = RGBLED(self.red, self.green, self.blue,'LEFT_HEADLIGHT')
-
-class RightHeadlight:
-    def __init__(self):
-        self.red = LED(27,'RIGHT_RED')
-        self.green = LED(26,'RIGHT_GREEN')
-        self.blue = LED(17,'RIGHT_BLUE')
-        self.headlight = RGBLED(self.red, self.green, self.blue,'RIGHT_HEADLIGHT')
-
-
-class Output(GPIO):
-    def __init__(self, pin_no, type_code, name):
-        super().__init__(pin_no, type_code, name)
-
-class FIT0441Direction(Output):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'FIT0441_DIRECTION', name)
-
-class FIT0441Motor():
-    def __init__(self, name, direction_pin, speed_pin, pulse_pin):
-        super().__init__(name)
-        self.direction_pin = direction_pin
-        self.speed_pin = speed_pin
-        self.pulse_pin = pulse_pin
-        self.pulse_pin.irq(self.pulse_detected)
-        self.pulse_count = 0
-        self.pulse_checkpoint = 0
-        self.duty = 0
-        self.stop_duty = 65534
-        self.min_speed_duty = 59000
-        self.max_speed_duty = 0
-        self.clockwise = 1
-        self.anticlockwise = 0
-        self.name = 'Unknown'
-
-    def set_pulse_checkpoint(self):
-        self.pulse_checkpoint = self.get_pulses()
-
-    def get_pulse_checkpoint(self):
-        return self.pulse_checkpoint
-
-    def get_pulse_diff(self):
-        return self.get_pulses() - self.pulse_checkpoint
-
-    def deinit(self):
-        self.speed_pin.deinit()
-
-    def stop(self):
-        duty = self.stop_duty
-        self.speed_pin.duty_u16(duty)
-
-    def pulse_detected(self, sender):
-        self.pulse_count += 1
-
-    def get_pulses(self):
-        return self.pulse_count
-
-    def set_speed(self, speed):  #  as a percentage
-        self.duty = (self.min_speed_duty
-                     - int(float(self.min_speed_duty - self.max_speed_duty)
-                        * (float(speed) / 100.0)))
-        self.speed_pin.duty_u16(self.duty)
-    
-    def set_direction(self, direction):  # 1 = clockwise, 0 = anticlockwise
-        if direction == 1:
-            self.direction_pin.value(self.clockwise)
-        elif direction == 0:
-            self.direction_pin.value(self.anticlockwise)
-
 class GPIOServo(object):
     def __init__(self, pin: int=15, hz: int=50):
         self._servo = PWM(Pin(pin))
@@ -373,3 +293,14 @@ class GPIOServo(object):
     def deinit(self):
         self._servo.deinit()
 
+###################### CHECK FOR COMPILATION ERRORS
+if __name__ == "__main__":
+    print ("GPIOPico_v06.py\n")
+    test_irsensor = IRSensor(pin_no=22, name='FRONT_LEFT')
+    test_button = Button(pin_no=7, name='YELLOW_BUTTON')
+    test_volts = Volts(pin_no=29, name='SUPPLY_VOLTS')
+    test_ultrasonic = HCSR04(trigger_pin_no=19, echo_pin_no=20, name='FRONT_US', critical_distance=100.0)
+    test_switch = Switch(pin_no=13, name='DIP_1')
+    test_headlight = RGBLED(LED(10,'LEFT_RED'), LED(14,'LEFT_GREEN'), LED(15,'LEFT_BLUE'),'LEFT_HEADLIGHT')
+    # N.B. No GPIO servos on Pico F
+    print (test_volts.str_allocated())
