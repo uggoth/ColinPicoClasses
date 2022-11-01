@@ -1,60 +1,99 @@
+module_name = 'GPIOPico_v14.py'
+
+import ColObjects_v01 as ColObjects
 import machine
 import utime
 
-class GPIO():
+class GPIO(ColObjects.ColObj):
 
-    valid_pin_nos = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,26,27,28,29]
+    first_pin_no = 0
+    last_pin_no = 39
+    free_code = 'FREE'
+    allocated = [free_code]*(last_pin_no + 1)
+
+    def allocate(pin_no, obj):
+        if ((pin_no < GPIO.first_pin_no) or (pin_no > GPIO.last_pin_no)):
+            return None
+        if GPIO.allocated[pin_no] != GPIO.free_code:
+            return None
+        GPIO.allocated[pin_no] = obj
+        return True
+
+    def deallocate(pin_no):
+        GPIO.allocated[pin_no] = GPIO.free_code
+
     valid_type_codes = {'INFRA_RED':'INPUT',
                         'BUTTON':'INPUT',
                         'US_TRIGGER':'OUTPUT',
                         'US_ECHO':'INPUT',
                         'SWITCH':'INPUT',
                         'VOLTS':'INPUT',
+                        'ADC':'INPUT',
                         'LED':'OUTPUT',
                         'CONTROL':'INPUT',
-                        'MOTOR':'OUTPUT'}
-    allocated = {}
-    allocated_by_type = {}
-    allocated_str = ''
-    for type_code in valid_type_codes:
-        allocated_by_type[type_code] = {}
+                        'INPUT':'INPUT',
+                        'OUTPUT':'OUTPUT',
+                        'SERVO':'OUTPUT',
+                        'MOTOR':'OUTPUT',
+                        'NEOPIXEL':'OUTPUT'}
     
-    def __init__(self, pin_no, type_code, name):
+    def __init__(self, name, type_code, pin_no):
+        response = super().__init__(name)
+        if not self.valid:
+            return None
         self.valid = False
-        if pin_no not in GPIO.valid_pin_nos:
-            print (pin_no,'not in',GPIO.valid_pin_nos)
-            return
-        self.pin_no = pin_no
+        if not GPIO.allocate(pin_no, self):
+            print (pin_no, 'already in use by', GPIO.allocated[pin_no].name)
+            return None
         if type_code not in GPIO.valid_type_codes:
-            print (type_code,'not in',GPIO.valid_type_codes)
-            return
-        self.type_code = type_code
-        if self.pin_no in GPIO.allocated:
-            print (self.pin_no,'already allocated')
-            return
-        self.name = name
+            print (type_code, 'not in', GPIO.valid_type_codes)
+            return None
         self.valid = True
+        self.pin_no = pin_no
         self.previous = 'UNKNOWN'
-        GPIO.allocated[self.pin_no] = self
-        GPIO.allocated_by_type[self.type_code][self.pin_no] = self
-        GPIO.allocated_str += str(self.pin_no) + ':' + self.name + ':' + str(self) + '\n\r'
-        
+
+    def close(self):
+        GPIO.deallocate(self.pin_no)
+        super().close()
+
     def str_allocated():
         out_string = ''
-        for device in sorted(GPIO.allocated):
-            obj = GPIO.allocated[device]
-            out_string += ('{:02}'.format(device) + ' : ' +
-                            '{:18}'.format(obj.name) + ' : ' +
-                            str(obj) + "\n")
+        for i in range(len(GPIO.allocated)):
+            if GPIO.allocated[i] != 'FREE':
+                obj = GPIO.allocated[i]
+                out_string += ('{:02}'.format(i) + ' : ' +
+                                '{:18}'.format(obj.name) + ' : ' +
+                                str(obj) + "\n")
         return out_string
     
-    def deallocate(pin_no):  #  ***** IMPLEMENT LATER *********
-        pass
-    
+    def deallocate(pin_no):
+        GPIO.allocated[pin_no] = 'FREE'
 
-class FIT0441Motor():
+class Output(GPIO):
+    def __init__(self, name, type_code, pin_no):
+        super().__init__(name, type_code, pin_no)
+        if self.valid:
+            self.pin_no = pin_no
+            self.type_code = type_code
+            self.pin = machine.Pin(pin_no, machine.Pin.OUT)
+        else:
+            return None
+
+class LED(Output):
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'LED', pin_no)
     
+    def on(self):
+        self.pin.on()
+        
+    def off(self):
+        self.pin.off()
+
+class FIT0441Motor(ColObjects.Motor):
     def __init__(self, name, direction_pin_no, speed_pin_no, pulse_pin_no):
+        response = super().__init__(name)
+        if not self.valid:
+            return None
         self.direction_pin_GPIO = GPIO(pin_no=direction_pin_no, type_code='MOTOR', name=name+'_direction_'+str(direction_pin_no))
         self.direction_pin = machine.Pin(direction_pin_no, machine.Pin.OUT)
         self.speed_pin_GPIO = GPIO(pin_no=speed_pin_no, type_code='MOTOR', name=name+'_speed_'+str(speed_pin_no))
@@ -70,7 +109,6 @@ class FIT0441Motor():
         self.max_speed_duty = 0
         self.clockwise = 1
         self.anticlockwise = 0
-        self.name = 'Unknown'
 
     def clk(self, speed):
         self.direction_pin.value(self.clockwise)
@@ -99,6 +137,8 @@ class FIT0441Motor():
         
     def close(self):
         self.deinit()
+        utime.sleep_ms(5)
+        super().close()
 
     def pulse_detected(self, sender):
         self.pulse_count += 1
@@ -118,10 +158,12 @@ class FIT0441Motor():
         elif direction == 0:
             self.direction_pin.value(self.anticlockwise)
 
-class L298NMotor():
+class L298NMotor(ColObjects.Motor):
     def __init__(self, name, clk_pin_no, anti_pin_no):
+        response = super().__init__(name)
+        if not self.valid:
+            return None
         #  clk is clockwise looking at the motor from the wheel side
-        self.name = name
         self.stop_duty = 0
         self.max_speed = 100  #  as an integer percentage
         self.min_speed = 0
@@ -148,35 +190,35 @@ class L298NMotor():
     def anti(self, speed):
         self.clk_PWM.duty_u16(self.stop_duty)
         self.anti_PWM.duty_u16(self.convert_speed_to_duty(speed))
-    def close(self):
-        self.clk_PWM.deinit()
-        self.anti_PWM.deinit()
     def stop(self):
         self.clk_PWM.duty_u16(self.stop_duty)
         self.anti_PWM.duty_u16(self.stop_duty)
+    def close(self):
+        self.clk_PWM.deinit()
+        self.anti_PWM.deinit()
+        utime.sleep_ms(5)
+        self.clk_pin_GPIO.close()
+        self.anti_pin_GPIO.close()
+        super().close()
 
 class Sensor(GPIO):
-    
-    sensor_list = []
-    
-    def __init__(self, pin_no, type_code, name):
-        super().__init__(pin_no, type_code, name)
+    def __init__(self, name, type_code, pin_no):
+        super().__init__(name, type_code, pin_no)
         if not self.valid:
             return
         self.state = 'UNKNOWN'
-        Sensor.sensor_list.append(self)
 
 class ControlPin(Sensor):
-    def __init__(self, pin_no, name):
-        self.type = 'CONTROL'
-        super().__init__(pin_no, self.type, name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'CONTROL', pin_no)
         self.pin_no = pin_no
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_DOWN)
-    
+    def get(self):
+        return self.pin.value()
 
 class Button(Sensor):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'BUTTON', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, pin_no, 'BUTTON')
         if not self.valid:
             return
         self.pin_no = pin_no
@@ -218,8 +260,8 @@ class Button(Sensor):
         
 
 class Volts(Sensor):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'VOLTS', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'VOLTS', pin_no)
         if not self.valid:
             return
         self.pin_no = pin_no
@@ -243,30 +285,33 @@ class Volts(Sensor):
         return self.state
 
 class USTrigger(Sensor):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'US_TRIGGER', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, pin_no, 'US_TRIGGER')
         self.pin_no = pin_no
         self.pin = machine.Pin(self.pin_no, machine.Pin.OUT)
         self.valid = True
 
 class USEcho(Sensor):    
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'US_ECHO', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, pin_no, 'US_ECHO')
         self.pin_no = pin_no
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN)
         self.valid = True
 
-class HCSR04():
+
+class HCSR04(ColObjects.ColObj):
     def __init__(self,
+                 name,
                  trigger_pin_no,
                  echo_pin_no,
-                 name,
                  critical_distance):
+        response = super().__init__(name)
+        if not self.valid:
+            return None
         self.type = 'HCSR04'
-        self.name = name
-        self.trigger_object = USTrigger(trigger_pin_no, name + '_TRIGGER')
+        self.trigger_object = USTrigger(name + '_TRIGGER', trigger_pin_no)
         self.trigger = self.trigger_object.pin
-        self.echo_object = USEcho(echo_pin_no, name + '_ECHO')
+        self.echo_object = USEcho(name + '_ECHO', echo_pin_no)
         self.echo = self.echo_object.pin
         self.error_code = 0
         self.error_message = ""
@@ -319,8 +364,8 @@ class HCSR04():
 
 
 class IRSensor(Sensor):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'INFRA_RED', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, pin_no, 'INFRA_RED')
         self.pin_no = pin_no
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
         self.type = 'IR'
@@ -335,8 +380,8 @@ class IRSensor(Sensor):
         return self.state
 
 class Switch(Sensor):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, 'SWITCH', name)
+    def __init__(self, name, pin_no):
+        super().__init__(name, pin_no, 'SWITCH')
         self.pin_no = pin_no
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
         self.type = 'SWITCH'
@@ -351,28 +396,11 @@ class Switch(Sensor):
         return self.state
 
 
-class Output(GPIO):
-    def __init__(self, pin_no, name, type_code):
-        self.pin_no = pin_no
-        self.name = name
-        self.type_code = type_code
-        self.pin = machine.Pin(pin_no, machine.Pin.OUT)
-        super().__init__(pin_no, type_code, name)
-
-class LED(Output):
-    def __init__(self, pin_no, name):
-        super().__init__(pin_no, name, 'LED')
-    
-    def on(self):
-        self.pin.on()
-        
-    def off(self):
-        self.pin.off()
-
-
-class RGBLED():
+class RGBLED(ColObjects.ColObj):
     def __init__(self, name, red_led, green_led, blue_led):
-        self.name = name
+        response = super().__init__(name)
+        if not self.valid:
+            return None
         self.red_led = red_led
         self.green_led = green_led
         self.blue_led = blue_led
@@ -411,10 +439,14 @@ class RGBLED():
         self.green_led.off()
         self.blue_led.off()
 
-class GPIOServo(object):
-    def __init__(self, pin: int=15, hz: int=50):
-        self._servo = PWM(Pin(pin))
-        self._servo.freq(hz)
+class GPIOServo(GPIO):
+    def __init__(self, name, pin_no: int=15, hertz: int=50):
+        super().__init__(name, 'SERVO', pin_no)
+        if self.valid:
+            self.pin_no = pin_no
+            self.hertz = hertz
+            self.pin = machine.PWM(machine.Pin(pin_no))
+            self.pin.freq(hertz)
     
     #duty = 1638 = 0.5ms = 65535/2/(T)(1/50)/2*1000
     def ServoDuty(self, duty): 
@@ -422,7 +454,7 @@ class GPIOServo(object):
             duty = 1638
         if duty >= 8190:
             duty = 8190
-        self._servo.duty_u16(duty)
+        self.pin.duty_u16(duty)
         
     def ServoAngle(self, pos): 
         if pos <= 0:
@@ -430,7 +462,7 @@ class GPIOServo(object):
         if pos >= 180:
             pos = 180
         pos_buffer = (pos/180) * 6552
-        self._servo.duty_u16(int(pos_buffer) + 1638)
+        self.pin.duty_u16(int(pos_buffer) + 1638)
 
     def ServoTime(self, us):
         if us <= 500:
@@ -438,19 +470,37 @@ class GPIOServo(object):
         if us >= 2500:
             us = 2500
         pos_buffer= (us / 1000) * 3276
-        self._servo.duty_u16(int(pos_buffer))
+        self.pin.duty_u16(int(pos_buffer))
         
-    def deinit(self):
-        self._servo.deinit()
+    def close(self):
+        self.pin.deinit()
+        super().close()
+        
 
-###################### CHECK FOR COMPILATION ERRORS
+class Reserved(GPIO):
+    def __init__(self, name, type_code, pin_no):
+        super().__init__(name, type_code, pin_no)
+
+uart_tx = Reserved('UART TX', 'OUTPUT', 0)
+uart_rx = Reserved('UART RX', 'INPUT', 1)
+smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
+vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
+onboard_led = LED('Onboard LED', 25)
+#  may wish to reserve ADCs
+#adc26 = Reserved('ADC 26', 'ADC', 26)
+#adc27 = Reserved('ADC 27', 'ADC', 27)
+#adc28 = Reserved('ADC 28', 'ADC', 28)
+onboard_volts = Volts('Onboard Voltmeter', 29)
+
 if __name__ == "__main__":
-    print ("GPIOPico_v09.py\n")
-    test_irsensor = IRSensor(pin_no=22, name='FRONT_LEFT')
-    test_button = Button(pin_no=7, name='YELLOW_BUTTON')
-    test_volts = Volts(pin_no=29, name='SUPPLY_VOLTS')
-    test_ultrasonic = HCSR04(trigger_pin_no=19, echo_pin_no=20, name='FRONT_US', critical_distance=100.0)
-    test_switch = Switch(pin_no=13, name='DIP_1')
-    test_headlight = RGBLED(LED(10,'LEFT_RED'), LED(14,'LEFT_GREEN'), LED(15,'LEFT_BLUE'),'LEFT_HEADLIGHT')
-    # N.B. No GPIO servos on Pico F
-    print (test_volts.str_allocated())
+    print (module_name)
+    print (' ')
+    print ('------ Allocated GPIOs ---------')
+    print (GPIO.str_allocated())
+    dummy1 = LED('failing',45)
+    dummy2 = GPIOServo('testing', 2)
+    print (GPIO.str_allocated())
+    dummy2.close()
+    print (GPIO.str_allocated())
+
+
