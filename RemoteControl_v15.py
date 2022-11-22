@@ -1,7 +1,7 @@
-module_name = 'RemoteControl_v12.py'
+module_name = 'RemoteControl_v15.py'
 
-import GPIOPico_v18 as GPIOPico
-ColObjects = GPIOPico.ColObjects
+import GPIOPico_v22 as GPIO
+ColObjects = GPIO.ColObjects
 import utime
 import rp2
 
@@ -22,13 +22,13 @@ def measure():
 
 class StateMachine(ColObjects.ColObj):
     
-    allocated = [GPIOPico.GPIO.free_code]*8
+    allocated = [GPIO.GPIO.free_code]*8
     valid_codes = ['MEASURE']
 
     def str_allocated():
         out_string = ''
         for i in range(len(StateMachine.allocated)):
-            if StateMachine.allocated[i] != GPIOPico.GPIO.free_code:
+            if StateMachine.allocated[i] != GPIO.GPIO.free_code:
                 obj = StateMachine.allocated[i]
                 out_string += ('{:02}'.format(i) + ' : ' +
                                 '{:18}'.format(obj.name) + ' : ' +
@@ -37,20 +37,20 @@ class StateMachine(ColObjects.ColObj):
 
     def allocate(obj):
         for i in range(len(StateMachine.allocated)):
-            if StateMachine.allocated[i] == GPIOPico.GPIO.free_code:
+            if StateMachine.allocated[i] == GPIO.GPIO.free_code:
                 StateMachine.allocated[i] = obj
                 return i
         raise ColObjects.ColError('No state machines free')
 
     def deallocate(no):
-        StateMachine.allocated[no] = GPIOPico.GPIO.free_code
+        StateMachine.allocated[no] = GPIO.GPIO.free_code
 
     def __init__(self, name, code, pin_no, hertz=100000):
         response = super().__init__(name)
         if code not in StateMachine.valid_codes:
             raise ColObjects.ColError ('**' + name + '**' + code + 'not in' + StateMachine.valid_codes)
         self.code = code
-        self.gpio = GPIOPico.ControlPin(self.name + '_control', pin_no)
+        self.gpio = GPIO.ControlPin(self.name + '_control', pin_no)
         self.pin_no = pin_no
         self.pin = self.gpio.pin
         self.state_machine_no = StateMachine.allocate(self)
@@ -96,7 +96,7 @@ class RCSwitch(ColObjects.ColObj):
         return self.previous
 
 class Joystick(ColObjects.ColObj):
-    def __init__(self, name, state_machine, interpolator):
+    def __init__(self, name, state_machine, interpolator=None):
         super().__init__(name)
         self.state_machine = state_machine
         if not self.state_machine.valid:
@@ -112,12 +112,12 @@ class Joystick(ColObjects.ColObj):
         value = self.state_machine.get_latest()
         if self.interpolator is not None:
             if value is not None:
-                self.position = self.interpolator.interpolate(value)
+                self.position = int(self.interpolator.interpolate(value))
                 if self.position != self.previous:
                     self.previous = self.position
             return self.previous
         else:
-            return value
+            return int(value)
 
 class Interpolator(ColObjects.ColObj):
     def __init__(self, name, keys, values):  #  arrays of matching pairs
@@ -200,7 +200,7 @@ class RemoteControl(ColObjects.ColObj):
 
     def set_mode_from_switch(self):
         if self.mode_switch == None:
-            self.mode = 'TANK'
+            self.mode = 'CAR'
         else:
             self.mode = self.mode_switch.get()
 

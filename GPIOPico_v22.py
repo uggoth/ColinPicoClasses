@@ -1,13 +1,13 @@
-module_name = 'GPIOPico_v17.py'
+module_name = 'GPIOPico_v22.py'
 
-import ColObjects_v03 as ColObjects
+import ColObjects_v06 as ColObjects
 import machine
 import utime
 
 class GPIO(ColObjects.ColObj):
 
     first_pin_no = 0
-    last_pin_no = 39
+    last_pin_no = 29
     free_code = 'FREE'
     allocated = [free_code]*(last_pin_no + 1)
 
@@ -26,11 +26,12 @@ class GPIO(ColObjects.ColObj):
     def str_allocated():
         out_string = ''
         for i in range(len(GPIO.allocated)):
-            if GPIO.allocated[i] != 'FREE':
+            if GPIO.allocated[i] == GPIO.free_code:
+                out_string += '{:02} : --FREE--'.format(i) + "\n"
+            else:
                 obj = GPIO.allocated[i]
                 out_string += ('{:02}'.format(i) + ' : ' +
-                                '{:18}'.format(obj.name) + ' : ' +
-                                str(obj) + "\n")
+                                '{:18}'.format(obj.name) + "\n")
         return out_string
     
     valid_type_codes = {'INFRA_RED':'INPUT',
@@ -197,10 +198,14 @@ class ControlPin(Sensor):
         return self.pin.value()
 
 class Button(Sensor):
+    
+    button_list = []
+    
     def __init__(self, name, pin_no):
         super().__init__(name, 'BUTTON', pin_no)
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
         self.latched = False
+        Button.button_list.append(self)
         
     def get(self):
         if self.pin.value() == 0:
@@ -349,9 +354,13 @@ class IRSensor(Sensor):
         return self.state
 
 class Switch(Sensor):
+    
+    switch_list = []
+    
     def __init__(self, name, pin_no):
         super().__init__(name, 'SWITCH', pin_no)
         self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
+        Switch.switch_list.append(self)
     
     def get(self):
         if self.pin.value() == 0:
@@ -404,6 +413,13 @@ class RGBLED(ColObjects.ColObj):
         self.red_led.off()
         self.green_led.off()
         self.blue_led.off()
+        
+    def close(self):
+        self.off()
+        self.red_led.close()
+        self.green_led.close()
+        self.blue_led.close()
+        
 
 class GPIOServo(GPIO):
     def __init__(self, name, pin_no: int=15, hertz: int=50):
@@ -445,14 +461,15 @@ class Reserved(GPIO):
     def __init__(self, name, type_code, pin_no):
         super().__init__(name, type_code, pin_no)
 
-uart_tx = Reserved('UART TX', 'OUTPUT', 0)
-uart_rx = Reserved('UART RX', 'INPUT', 1)
-smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
-vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
-onboard_led = LED('Onboard LED', 25)
-onboard_volts = Volts('Onboard Voltmeter', 29)
-
 if __name__ == "__main__":
     print (module_name)
+    print ('Normally reserved:')
+    uart_tx = Reserved('UART TX', 'OUTPUT', 0)
+    uart_rx = Reserved('UART RX', 'INPUT', 1)
+    smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
+    vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
+    onboard_led = LED('Onboard LED', 25)
+    onboard_volts = Volts('Onboard Voltmeter', 29)
+    print (GPIO.str_allocated())
 
 
