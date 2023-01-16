@@ -1,6 +1,6 @@
-module_name = 'RemoteControl_v16.py'
+module_name = 'RemoteControl_v21.py'
 
-import GPIOPico_v23 as GPIO
+import GPIOPico_v26 as GPIO
 ColObjects = GPIO.ColObjects
 import utime
 import rp2
@@ -20,43 +20,21 @@ def measure():
     push(noblock)
     wrap()
 
-class StateMachine(ColObjects.ColObj):
+class StateMachine(ColObjects.PIO):
     
-    allocated = [GPIO.GPIO.free_code]*8
     valid_codes = ['MEASURE']
 
-    def str_allocated():
-        out_string = ''
-        for i in range(len(StateMachine.allocated)):
-            if StateMachine.allocated[i] != GPIO.GPIO.free_code:
-                obj = StateMachine.allocated[i]
-                out_string += ('{:02}'.format(i) + ' : ' +
-                                '{:18}'.format(obj.name) + ' : ' +
-                                str(obj) + "\n")
-        return out_string
-
-    def allocate(obj):
-        for i in range(len(StateMachine.allocated)):
-            if StateMachine.allocated[i] == GPIO.GPIO.free_code:
-                StateMachine.allocated[i] = obj
-                return i
-        raise ColObjects.ColError('No state machines free')
-
-    def deallocate(no):
-        StateMachine.allocated[no] = GPIO.GPIO.free_code
-
     def __init__(self, name, code, pin_no, hertz=100000):
-        response = super().__init__(name)
+        response = super().__init__(name, 0)
         if code not in StateMachine.valid_codes:
             raise ColObjects.ColError ('**' + name + '**' + code + 'not in' + StateMachine.valid_codes)
         self.code = code
         self.gpio = GPIO.ControlPin(self.name + '_control', pin_no)
         self.pin_no = pin_no
         self.pin = self.gpio.pin
-        self.state_machine_no = StateMachine.allocate(self)
         if code != 'MEASURE':
             raise ColObjects.ColError ('**' + name + '** code' + code + 'not implemented yet')
-        self.instance = rp2.StateMachine(self.state_machine_no, measure, freq=hertz, in_base=self.pin, jmp_pin=self.pin)
+        self.instance = rp2.StateMachine(self.pio_no, measure, freq=hertz, in_base=self.pin, jmp_pin=self.pin)
         self.valid = True
         self.instance.active(1)
     def get_next_blocking(self):
@@ -69,7 +47,7 @@ class StateMachine(ColObjects.ColObj):
         return self.value
     def close(self):
         self.instance.active(0)
-        StateMachine.deallocate(self.state_machine_no)
+        StateMachine.deallocate(self.pio_no)
         self.gpio.close()
         super().close()
 
@@ -99,25 +77,29 @@ class Joystick(ColObjects.ColObj):
     def __init__(self, name, state_machine, interpolator=None):
         super().__init__(name)
         self.state_machine = state_machine
+        self.neutral = 75
         if not self.state_machine.valid:
             raise ColObjects.ColError ('**** bad sm' + self.state_machine.name)
         self.interpolator = interpolator
         if interpolator is not None:
             self.previous = self.interpolator.interpolate(75)
         else:
-            self.previous = 75  #  mid point
+            self.previous = self.neutral  #  mid point
     def close(self):
         super().close()
     def get(self):
         value = self.state_machine.get_latest()
-        if self.interpolator is not None:
+        if value is None:
+            return self.previous
+        if self.interpolator is None:
+            self.previous = int(value)
+            return self.previous
+        else:
             if value is not None:
                 self.position = int(self.interpolator.interpolate(value))
                 if self.position != self.previous:
                     self.previous = self.position
             return self.previous
-        else:
-            return int(value)
 
 class Interpolator(ColObjects.ColObj):
     def __init__(self, name, keys, values):  #  arrays of matching pairs
@@ -178,25 +160,39 @@ class RemoteControl(ColObjects.ColObj):
         self.left_side_interpolator = Interpolator('remls',keys, values)
         values = [-1.0, 0.0, 1.0, 1.0, 1.0, 1.0]
         self.right_side_interpolator = Interpolator('remrs',keys, values)
+        self.min_throttle = -100
+        self.max_throttle = 100
+        self.min_steering = -100
+        self.max_steering = 100
+        self.reversing_mode = 0
 
+    def constrain(self, n, lowest, highest):
+        if n > highest:
+            a = highest
+        elif n < lowest:
+            a = lowest
+        else:
+            a = n
+        return a
+        
     def __str__(self):
         out_string = ''
         out_string += self.name
         return out_string
 
     def calculate_speeds_tank(self, left_value, right_value):
-        left_speed = left_value
-        right_speed = right_value
-        return left_speed, right_speed
+        left = self.constrain (left_value, self.min_throttle, self.max_throttle)
+        right = self.constrain (right_value, self.min_steering, self.max_steering)
+        return int(left), int(right)
 
-    def calculate_speeds_car(self, throttle_value, steering_value):
-        if ((throttle_value is None) or (steering_value is None)):
-            return 0,0
-        left_factor = self.left_side_interpolator.interpolate(steering_value)
-        right_factor = self.right_side_interpolator.interpolate(steering_value)
-        left_speed = int(throttle_value * left_factor)
-        right_speed = int(throttle_value * right_factor)
-        return left_speed, right_speed
+    def calculate_speeds_car(self, throttle, steering):
+        if ((throttle < 0) and (self.reversing_mode == 0)):
+                left = self.constrain (throttle + steering, self.min_throttle, self.max_throttle)
+                right = self.constrain (throttle - steering, self.min_throttle, self.max_throttle)
+        else:
+            right = self.constrain (throttle + steering, self.min_throttle, self.max_throttle)
+            left = self.constrain (throttle - steering, self.min_throttle, self.max_throttle)
+        return int(left), int(right)
 
     def set_mode_from_switch(self):
         if self.mode_switch == None:
@@ -230,6 +226,8 @@ class RemoteControl(ColObjects.ColObj):
         
     def close(self):
         self.stop()
+        self.left_up_down.close()
+        self.right_sideways.close()
         self.left_side.close()
         self.right_side.close()
 
@@ -280,3 +278,12 @@ class RemoteControlWithHeadlights(RemoteControl):
 
 if __name__ == "__main__":
     print (module_name)
+    print ('----- GPIO C -----\n',GPIO.GPIO.str_allocated())
+    sm1 = StateMachine('TEST', 'MEASURE', 4)
+    print ('--- SM A -----\n',ColObjects.PIO.str_allocated())
+    js = Joystick('test', sm1)
+    utime.sleep_ms(10)
+    print ('----- GPIO D -----\n',GPIO.GPIO.str_allocated())
+    js.close()
+    sm1.close()
+    print ('----- GPIO E -----\n',GPIO.GPIO.str_allocated())

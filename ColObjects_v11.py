@@ -1,4 +1,4 @@
-module_name = 'ColObjects_v08.py'
+module_name = 'ColObjects_v11.py'
 
 import math
 import utime
@@ -22,12 +22,13 @@ class ColObj():
                                 str(obj) + '\n')
         return out_string
     
-    def __init__(self, name):
+    def __init__(self, name, description=''):
         self.name = name
         if name in ColObj.allocated:
             if ColObj.allocated[self.name] != ColObj.free_code:
                 raise ColError(name + ' already allocated')
         ColObj.allocated[self.name] = self
+        self.description = description
         
     def __str__(self):
         return self.name
@@ -268,7 +269,55 @@ class DriveCalc():
             right = self.constrain (throttle - steering, self.min_throttle, self.max_throttle)
             return int(left), int(right)
 
+class PIO(ColObj):
+    
+    allocated = {}
+    free_code = '--FREE--'
+    pio_no = 0
+    for i in range(2):  #  There are two blocks. Block 0 is conventionally used for remote control
+                        #                        Block 1 is conventionally used for neopixels
+                        #  This avoids running out of code space as code gets re-used
+        allocated[i] = {}
+        for j in range(4):   #  each block has 4 PIOs
+            allocated[i][j] = {'PIO':pio_no,'NAME':free_code}
+            pio_no += 1
+    
+    def str_allocated():
+        out_string = ('{:3}'.format('PIO') +
+                      '  {:18}'.format('NAME') + '\n')
+        for i in range(2):
+            for j in range(4):
+                out_string += ('{:3}'.format(PIO.allocated[i][j]['PIO'])  +
+                               '  {:18}'.format(PIO.allocated[i][j]['NAME']) + '\n')
+        return out_string
+
+    def allocate(name, block):
+        for j in range(4):
+            if PIO.allocated[block][j]['NAME'] == PIO.free_code:
+                PIO.allocated[block][j]['NAME'] = name
+                return PIO.allocated[block][j]['PIO']
+        return None        
+        
+    def deallocate(pio_no):
+        for i in range(2):
+            for j in range(4):
+                if PIO.allocated[i][j]['PIO'] == pio_no:
+                    PIO.allocated[i][j]['NAME'] = PIO.free_code
+                    return True
+        return False
+
+    def __init__(self, name, block):
+        super().__init__(name)
+        self.pio_no = PIO.allocate(name, block)
+        if self.pio_no is None:
+            print (PIO.str_allocated())
+            raise ColError('**** Could not get PIO')
+
 if __name__ == "__main__":
     print (module_name)
-   
-    
+    d1 = PIO('Fred',1)
+    d2 = PIO('Bill',1)
+    d3 = PIO('George',0)
+    print (PIO.str_allocated())
+    PIO.deallocate(4)
+    print (PIO.str_allocated())

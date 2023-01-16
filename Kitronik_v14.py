@@ -1,6 +1,6 @@
-module_name = 'Kitronik_v10.py'
+module_name = 'Kitronik_v14.py'
 
-import GPIOPico_v23 as GPIO
+import GPIOPico_v26 as GPIO
 ColObjects = GPIO.ColObjects
 import PicoRobotics
 import math
@@ -81,9 +81,7 @@ class Servo(ColObjects.ColObj):
                  board_object,
                  servo_no,
                  max_rotation,
-                 min_rotation,
-                 park_position,
-                 transport_position):
+                 min_rotation):
         super().__init__(name)
         self.board_object = board_object
         self.board_object.allocate_servo(servo_no, name)
@@ -91,27 +89,30 @@ class Servo(ColObjects.ColObj):
         self.servo_no = int(servo_no)
         self.max_rotation = max_rotation
         self.min_rotation = min_rotation
-        self.park_position = park_position
-        self.transport_position = transport_position
-        self.current_position = self.park_position
-        self.start_position = self.current_position
-        self.target_position = self.current_position
-    def park(self):
-        self.move_to(self.park_position)
-    def transport(self):
-        self.move_to(self.transport_position)
-    def move_to(self, new_position, speed=50):     # speed is from 1 to 100
-        delay = int(1000 / speed)
-        rotation = new_position - self.current_position
-        no_increments = int(math.fabs(rotation) / 3)
-        if no_increments < 1:
-            return
-        increment = rotation / no_increments
-        for i  in range(no_increments):
-            self.board.servoWrite(self.servo_no, self.current_position + (increment * i))
-            utime.sleep_ms(delay)
-        self.board.servoWrite(self.servo_no, new_position)
-        self.current_position = new_position
+        self.current_position = 90
+    def move_to(self, new_position, speed=0):     # speed is from 1 to 100. Zero means as fast as possible
+        if new_position < self.min_rotation:
+            target_position = self.min_rotation
+        elif new_position > self.max_rotation:
+            target_position = self.max_rotation
+        else:
+            target_position = new_position
+        if speed != 0:
+            delay = int(1000 / speed)
+            rotation = target_position - self.current_position
+            no_increments = int(math.fabs(rotation) / 3)
+            if no_increments < 1:
+                return
+            increment = rotation / no_increments
+            for i  in range(no_increments):
+                self.board.servoWrite(self.servo_no, self.current_position + (increment * i))
+                utime.sleep_ms(delay)
+        self.board.servoWrite(self.servo_no, target_position)
+        self.current_position = target_position
+    def up(self, speed=0):
+        self.move_to(new_position=self.max_rotation, speed=speed)
+    def down(self, speed=0):
+        self.move_to(new_position=self.min_rotation, speed=speed)
     def close(self):
         self.board_object.deallocate_servo(self.servo_no)
         super().close()
@@ -122,9 +123,7 @@ class TypicalKitronikServo(Servo):
                  board_object=my_board,
                  servo_no=servo_no,
                  max_rotation=180,
-                 min_rotation=0,
-                 park_position=90,
-                 transport_position=90)
+                 min_rotation=0)
     def up(self, speed=25):
         self.move_to(new_position=90, speed=speed)
     def down(self, speed=25):
@@ -147,30 +146,28 @@ class Arm(ColObjects.ColObj):
         self.poses['UP'] = [[self.shoulder_servo,100],[self.bucket_servo,110]]
         self.poses['DOWN'] = [[self.shoulder_servo,120],[self.bucket_servo,130]]
     
-    def do_pose(self, pose_id, speed=50):  #  from 1 to 100
+    def do_pose(self, pose_id, speed=0):  #  from 1 to 100. Zero is ASAP
         this_pose = self.poses[pose_id]
         nservos = len(this_pose)
-        interval_ms = int((Arm.duration / float(speed)) * 1000.0)
         for j in range(nservos):
             servo = this_pose[j][0]
             target = this_pose[j][1]
             servo.start_position = servo.current_position
             servo.target_position = target
-        for i in range(Arm.steps):
-            for j in range(nservos):
-                servo = this_pose[j][0]
-                target = servo.target_position
-                start = servo.start_position
-                new_position = start + ((float(target - start) / Arm.steps) * i)
-                self.board.servoWrite(servo.servo_no, new_position)
-                utime.sleep_ms(interval_ms)
+        if speed != 0:
+            interval_ms = int((Arm.duration / float(speed)) * 1000.0)
+            for i in range(Arm.steps):
+                for j in range(nservos):
+                    servo = this_pose[j][0]
+                    target = servo.target_position
+                    start = servo.start_position
+                    new_position = start + ((float(target - start) / Arm.steps) * i)
+                    self.board.servoWrite(servo.servo_no, new_position)
+                    utime.sleep_ms(interval_ms)
         for j in range(nservos):
             servo = this_pose[j][0]
             self.board.servoWrite(servo.servo_no, servo.target_position)
             servo.current_position = servo.target_position
-    def close(self):
-        self.shoulder_servo.close()
-        self.bucket_servo.close()
 
 class KitronikMotor(ColObjects.Motor):  
     def __init__(self, name, board_object, motor_no):
@@ -203,8 +200,13 @@ if __name__ == "__main__":
     test_arm = Arm('Front Loader', board_object, shoulder_servo, shoulder_servo)
     test_motor = KitronikMotor('tmotor', board_object, 1)
     #bad_motor = KitronikMotor('tmotor', board, 2)
+    print ('GPIO LIST BEFORE CLOSE:')
+    print (GPIO.GPIO.str_allocated())
     print ('MOTOR LIST BEFORE CLOSE:')
     print (board_object.str_motor_list())
     test_motor.close()
     print ('MOTOR LIST AFTER CLOSE:')
     print (board_object.str_motor_list())
+    board_object.close()
+    print ('GPIO LIST AFTER CLOSE:')
+    print (GPIO.GPIO.str_allocated())

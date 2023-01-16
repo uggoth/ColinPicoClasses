@@ -1,6 +1,6 @@
-module_name = 'GPIOPico_v22.py'
+module_name = 'GPIOPico_v26.py'   #  14/Jan/2023
 
-import ColObjects_v06 as ColObjects
+import ColObjects_v11 as ColObjects
 import machine
 import utime
 
@@ -36,6 +36,7 @@ class GPIO(ColObjects.ColObj):
     
     valid_type_codes = {'INFRA_RED':'INPUT',
                         'BUTTON':'INPUT',
+                        'BUZZER':'OUTPUT',
                         'US_TRIGGER':'OUTPUT',
                         'US_ECHO':'INPUT',
                         'SWITCH':'INPUT',
@@ -67,15 +68,116 @@ class Output(GPIO):
         super().__init__(name, type_code, pin_no)
         self.pin = machine.Pin(pin_no, machine.Pin.OUT)
 
-class LED(Output):
+class OutputPWM(GPIO):
+    def __init__(self, name, type_code, pin_no):
+        super().__init__(name, type_code, pin_no)
+        self.pin = machine.PWM(machine.Pin(pin_no))
+
+class Buzzer(OutputPWM):
     def __init__(self, name, pin_no):
-        super().__init__(name, 'LED', pin_no)
+        super().__init__(name, 'BUZZER', pin_no)
+        self.tones = {
+            "B0": 31,
+            "C1": 33,
+            "CS1": 35,
+            "D1": 37,
+            "DS1": 39,
+            "E1": 41,
+            "F1": 44,
+            "FS1": 46,
+            "G1": 49,
+            "GS1": 52,
+            "A1": 55,
+            "AS1": 58,
+            "B1": 62,
+            "C2": 65,
+            "CS2": 69,
+            "D2": 73,
+            "DS2": 78,
+            "E2": 82,
+            "F2": 87,
+            "FS2": 93,
+            "G2": 98,
+            "GS2": 104,
+            "A2": 110,
+            "AS2": 117,
+            "B2": 123,
+            "C3": 131,
+            "CS3": 139,
+            "D3": 147,
+            "DS3": 156,
+            "E3": 165,
+            "F3": 175,
+            "FS3": 185,
+            "G3": 196,
+            "GS3": 208,
+            "A3": 220,
+            "AS3": 233,
+            "B3": 247,
+            "C4": 262,
+            "CS4": 277,
+            "D4": 294,
+            "DS4": 311,
+            "E4": 330,
+            "F4": 349,
+            "FS4": 370,
+            "G4": 392,
+            "GS4": 415,
+            "A4": 440,
+            "AS4": 466,
+            "B4": 494,
+            "C5": 523,
+            "CS5": 554,
+            "D5": 587,
+            "DS5": 622,
+            "E5": 659,
+            "F5": 698,
+            "FS5": 740,
+            "G5": 784,
+            "GS5": 831,
+            "A5": 880,
+            "AS5": 932,
+            "B5": 988,
+            "C6": 1047,
+            "CS6": 1109,
+            "D6": 1175,
+            "DS6": 1245,
+            "E6": 1319,
+            "F6": 1397,
+            "FS6": 1480,
+            "G6": 1568,
+            "GS6": 1661,
+            "A6": 1760,
+            "AS6": 1865,
+            "B6": 1976,
+            "C7": 2093,
+            "CS7": 2217,
+            "D7": 2349,
+            "DS7": 2489,
+            "E7": 2637,
+            "F7": 2794,
+            "FS7": 2960,
+            "G7": 3136,
+            "GS7": 3322,
+            "A7": 3520,
+            "AS7": 3729,
+            "B7": 3951}
+        self.sample_song = ["E4","G4","A4","P","E4","G4","B4","A4","P","E4","G4","A4","P","G4","E4"]
+
+    def play_tone(self, frequency):
+        self.pin.duty_u16(1000)
+        self.pin.freq(frequency)
+    def be_quiet(self):
+        self.pin.duty_u16(0)
+    def play_song(self, mysong):
+        for i in range(len(mysong)):
+            if (mysong[i] == "P"):
+                self.be_quiet()
+            else:
+                self.play_tone(self.tones[mysong[i]])
+            utime.sleep_ms(300)
+        self.be_quiet()
     
-    def on(self):
-        self.pin.on()
-        
-    def off(self):
-        self.pin.off()
 
 class FIT0441Motor(ColObjects.Motor):
     def __init__(self, name, direction_pin_no, speed_pin_no, pulse_pin_no):
@@ -242,26 +344,27 @@ class Button(Sensor):
         
 
 class Volts(Sensor):
-    def __init__(self, name, pin_no):
+    def __init__(self, name, pin_no, bad_volts=2.9, good_volts=5.4):
         super().__init__(name, 'VOLTS', pin_no)
         self.pin = machine.ADC(pin_no)
-        self.warning_level = 5.0
+        self.bad_volts = bad_volts
+        self.good_volts = good_volts
         self.volts = 0.0
-        self.state = 'UNKNOWN'
     
     def read(self):
-        conversion_factor = 0.000164
+        conversion_factor = (3.3 / 65535.0) * 3.0  #  VSYS / 3
         raw = self.pin.read_u16()
         self.volts = raw * conversion_factor
         return self.volts
     
     def get(self):
         volts = self.read()
-        if volts < self.warning_level:
-            self.state = 'OFF'
+        if volts < self.bad_volts:
+            return 0
+        elif volts > self.good_volts:
+            return 100
         else:
-            self.state = 'ON'
-        return self.state
+            return int((volts - self.bad_volts) * (self.good_volts - self.bad_volts) / 100)
 
 class USTrigger(Sensor):
     def __init__(self, name, pin_no):
@@ -335,8 +438,10 @@ class HCSR04(ColObjects.ColObj):
         self.distance = (timepassed * 0.343) / 2
         self.last_distance_measured = self.distance
         return self.distance
-
-
+    def close(self):
+        self.trigger_object.close()
+        self.echo_object.close()
+        super().close()
 
 class IRSensor(Sensor):
     def __init__(self, name, pin_no):
@@ -371,6 +476,16 @@ class Switch(Sensor):
             self.state = 'UNKNOWN'
         return self.state
 
+
+class LED(Output):
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'LED', pin_no)
+    
+    def on(self):
+        self.pin.on()
+        
+    def off(self):
+        self.pin.off()
 
 class RGBLED(ColObjects.ColObj):
     def __init__(self, name, red_led, green_led, blue_led):
@@ -463,13 +578,13 @@ class Reserved(GPIO):
 
 if __name__ == "__main__":
     print (module_name)
-    print ('Normally reserved:')
     uart_tx = Reserved('UART TX', 'OUTPUT', 0)
     uart_rx = Reserved('UART RX', 'INPUT', 1)
     smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
     vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
     onboard_led = LED('Onboard LED', 25)
     onboard_volts = Volts('Onboard Voltmeter', 29)
+    print ('Normally reserved:')
     print (GPIO.str_allocated())
 
 
