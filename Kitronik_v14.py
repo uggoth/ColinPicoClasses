@@ -170,7 +170,7 @@ class Arm(ColObjects.ColObj):
             servo.current_position = servo.target_position
 
 class KitronikMotor(ColObjects.Motor):  
-    def __init__(self, name, board_object, motor_no):
+    def __init__(self, name, board_object, motor_no, clockwise='r'):
         super().__init__(name)
         self.board_object = board_object
         self.board_object.allocate_motor(motor_no, name)
@@ -178,10 +178,16 @@ class KitronikMotor(ColObjects.Motor):
         self.max_speed = 100  #  as an integer percentage
         self.min_speed = 0
         self.motor_no = motor_no
+        if clockwise == 'r':
+            self.clockwise = 'r'
+            self.anticlockwise = 'f'
+        else:
+            self.clockwise = 'f'
+            self.anticlockwise = 'r'
     def clk(self, speed):
-        self.board.motorOn(self.motor_no, 'f', speed)
+        self.board.motorOn(self.motor_no, self.clockwise, speed)
     def anti(self, speed):
-        self.board.motorOn(self.motor_no, 'r', speed)
+        self.board.motorOn(self.motor_no, self.anticlockwise, speed)
     def stop(self):
         self.board.motorOff(self.motor_no)
     def close(self):

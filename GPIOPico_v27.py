@@ -1,8 +1,30 @@
-module_name = 'GPIOPico_v25.py'
+module_name = 'GPIOPico_v27.py'
+creation_date = '202302060808'
 
-import ColObjects_v10 as ColObjects
+import ColObjects_v12 as ColObjects
 import machine
 import utime
+
+#GPIO class reference:
+#   GPIO
+#      Reserved
+#      DigitalInput
+#         Button
+#         Control Pin
+#         IRSensor
+#         Switch
+#         USEcho
+#         Volts
+#      DigitalOutput
+#         LED
+#         USTrigger
+#      PWM
+#         Buzzer
+#         GPIOServo
+#   Compound objects with multiple inheritance
+#      FIT0441Motor
+#      L298Motor
+#      HCSR04
 
 class GPIO(ColObjects.ColObj):
 
@@ -10,6 +32,7 @@ class GPIO(ColObjects.ColObj):
     last_pin_no = 29
     free_code = 'FREE'
     allocated = [free_code]*(last_pin_no + 1)
+    ids = {}
 
     def allocate(pin_no, obj):
         if ((pin_no < GPIO.first_pin_no) or (pin_no > GPIO.last_pin_no)):
@@ -34,6 +57,13 @@ class GPIO(ColObjects.ColObj):
                                 '{:18}'.format(obj.name) + "\n")
         return out_string
     
+    def get_type_list(type_code):
+        type_list = {}
+        for obj in GPIO.allocated:
+            if obj.type_code == type_code:
+                type_list[obj.name] = obj
+        return type_list
+
     valid_type_codes = {'INFRA_RED':'INPUT',
                         'BUTTON':'INPUT',
                         'BUZZER':'OUTPUT',
@@ -63,121 +93,242 @@ class GPIO(ColObjects.ColObj):
         GPIO.deallocate(self.pin_no)
         super().close()
 
-class Output(GPIO):
+class Reserved(GPIO):
+    def __init__(self, name, type_code, pin_no):
+        super().__init__(name, type_code, pin_no)
+
+#############  INPUTS  #############################################################
+
+class DigitalInput(GPIO):
+    def __init__(self, name, type_code, pin_no, pullup=machine.Pin.PULL_UP, callback=None):
+        super().__init__(name, type_code, pin_no)
+        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, pullup)
+        if callback is not None:
+            self.pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=callback)
+        self.state = 'UNKNOWN'
+        GPIO.ids[id(self.pin)] = self
+    def get(self):
+        if self.pin.value() == 0:
+            self.state = 'ON'
+        elif self.pin.value() == 1:
+            self.state = 'OFF'
+        else:
+            self.state = 'UNKNOWN'
+        return self.state
+
+class Button(DigitalInput): 
+    button_list = []
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'BUTTON', pin_no)
+        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
+        Button.button_list.append(self)
+    def wait(self, seconds=100, LED=None):
+        flash_iterations = 100
+        flip_flop = True
+        loops = seconds * 1000
+        for i in range(loops):   #  wait maximum of 100 seconds
+            if LED is not None:
+                if i % flash_iterations == 0:
+                    if flip_flop:
+                        LED.on()
+                    else:
+                        LED.off()
+                    flip_flop = not flip_flop
+            response = self.get()
+            if self.state == 'ON':
+                if LED is not None:
+                    LED.off()
+                return True
+            utime.sleep_ms(1)
+        if LED is not None:
+            LED.off()
+        return False
+        
+class ControlPin(DigitalInput):
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'CONTROL', pin_no)
+        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_DOWN)
+    def get(self):
+        return self.pin.value()
+
+class IRSensor(DigitalInput):
+    def __init__(self, name, pin_no, callback=None):
+        super().__init__(name, 'INFRA_RED', pin_no, callback=callback)
+
+class Switch(DigitalInput):
+    switch_list = []
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'SWITCH', pin_no)
+        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
+        Switch.switch_list.append(self)
+    def get(self):
+        if self.pin.value() == 0:
+            self.state = 'ON'
+        elif self.pin.value() == 1:
+            self.state = 'OFF'
+        else:
+            self.state = 'UNKNOWN'
+        return self.state
+
+class USEcho(DigitalInput):    
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'US_ECHO', pin_no)
+
+class Volts(DigitalInput):
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'VOLTS', pin_no)
+        self.pin = machine.ADC(pin_no)
+        self.warning_level = 5.0
+        self.volts = 0.0
+        self.state = 'UNKNOWN'
+    
+    def read(self):
+        conversion_factor = 0.000164
+        raw = self.pin.read_u16()
+        self.volts = raw * conversion_factor
+        return self.volts
+    
+    def get(self):
+        volts = self.read()
+        if volts < self.warning_level:
+            self.state = 'OFF'
+        else:
+            self.state = 'ON'
+        return self.state
+
+###############  OUTPUTS  #############################################################
+
+class DigitalOutput(GPIO):
     def __init__(self, name, type_code, pin_no):
         super().__init__(name, type_code, pin_no)
         self.pin = machine.Pin(pin_no, machine.Pin.OUT)
+    def set(self, new_state):
+        if self.new_state == 'ON':
+            self.pin.value(0)
+            return True
+        elif self.new_state == 'OFF':
+            self.pin.value(1)
+            return True
+        return False
 
-class OutputPWM(GPIO):
-    def __init__(self, name, type_code, pin_no):
-        super().__init__(name, type_code, pin_no)
-        self.pin = machine.PWM(machine.Pin(pin_no))
-
-class Buzzer(OutputPWM):
+class LED(DigitalOutput):
     def __init__(self, name, pin_no):
-        super().__init__(name, 'BUZZER', pin_no)
-        self.tones = {
-            "B0": 31,
-            "C1": 33,
-            "CS1": 35,
-            "D1": 37,
-            "DS1": 39,
-            "E1": 41,
-            "F1": 44,
-            "FS1": 46,
-            "G1": 49,
-            "GS1": 52,
-            "A1": 55,
-            "AS1": 58,
-            "B1": 62,
-            "C2": 65,
-            "CS2": 69,
-            "D2": 73,
-            "DS2": 78,
-            "E2": 82,
-            "F2": 87,
-            "FS2": 93,
-            "G2": 98,
-            "GS2": 104,
-            "A2": 110,
-            "AS2": 117,
-            "B2": 123,
-            "C3": 131,
-            "CS3": 139,
-            "D3": 147,
-            "DS3": 156,
-            "E3": 165,
-            "F3": 175,
-            "FS3": 185,
-            "G3": 196,
-            "GS3": 208,
-            "A3": 220,
-            "AS3": 233,
-            "B3": 247,
-            "C4": 262,
-            "CS4": 277,
-            "D4": 294,
-            "DS4": 311,
-            "E4": 330,
-            "F4": 349,
-            "FS4": 370,
-            "G4": 392,
-            "GS4": 415,
-            "A4": 440,
-            "AS4": 466,
-            "B4": 494,
-            "C5": 523,
-            "CS5": 554,
-            "D5": 587,
-            "DS5": 622,
-            "E5": 659,
-            "F5": 698,
-            "FS5": 740,
-            "G5": 784,
-            "GS5": 831,
-            "A5": 880,
-            "AS5": 932,
-            "B5": 988,
-            "C6": 1047,
-            "CS6": 1109,
-            "D6": 1175,
-            "DS6": 1245,
-            "E6": 1319,
-            "F6": 1397,
-            "FS6": 1480,
-            "G6": 1568,
-            "GS6": 1661,
-            "A6": 1760,
-            "AS6": 1865,
-            "B6": 1976,
-            "C7": 2093,
-            "CS7": 2217,
-            "D7": 2349,
-            "DS7": 2489,
-            "E7": 2637,
-            "F7": 2794,
-            "FS7": 2960,
-            "G7": 3136,
-            "GS7": 3322,
-            "A7": 3520,
-            "AS7": 3729,
-            "B7": 3951}
-        self.sample_song = ["E4","G4","A4","P","E4","G4","B4","A4","P","E4","G4","A4","P","G4","E4"]
+        super().__init__(name, 'LED', pin_no)    
+    def on(self):
+        self.pin.on()
+    def off(self):
+        self.pin.off()
 
-    def play_tone(self, frequency):
+class USTrigger(DigitalOutput):
+    def __init__(self, name, pin_no):
+        super().__init__(name, 'US_TRIGGER', pin_no)
+
+
+#############  PWM OUTPUTS  ###########################################################
+
+class PWM(GPIO):
+    pwms_by_gpio = ['0A','0B','1A','1B','2A','2B','3A','3B','4A','4B','5A','5B','6A','6B','7A','7B','0A','0B','1A','1B','2A','2B','3A','3B','4A','4B','5A','5B','6A','6B','7A','7B']
+    gpios_by_pwm = {'0A':[0,16],'0B':[1,17],'1A':[2,18],'1B':[3,19],'2A':[4,20],'2B':[5,21],'3A':[6,22],'3B':[7,23],'4A':[8,24],'4B':[9,25],'5A':[10,26],'5B':[11,27],'6A':[12,28],'6B':[13,29]}
+    pwms_allocated = {}
+    def __init__(self, name, type_code, pin_no, freq):
+        super().__init__(name, type_code, pin_no)
+        self.pin = machine.Pin(pin_no)
+        self.pwm = machine.PWM(self.pin)
+        self.generator = PWM.pwms_by_gpio[pin_no]
+        if self.generator in PWM.pwms_allocated:
+            raise ColObjects.ColError('**** PWM generator ' + self.generator + ' already in use')
+        PWM.pwms_allocated[self.generator] = pin_no
+        self.pwm.freq(freq)
+    def set_duty(self, duty):
+        self.pwm.duty_u16(duty)
+    def close(self):
+        self.pwm.deinit()
+        del(PWM.pwms_allocated[self.generator])
+        super().close()
+
+class Buzzer(ColObjects.ColObj):     # N.B. If 'dip' is supplied, Buzzer only works if DIP is ON.
+    def __init__(self, name, pin_no, dip=None):
+        self.name = name
+        super().__init__(name)
+        self.pin_no = pin_no
+        self.pwm_object = PWM(name+'_PWM', 'BUZZER', pin_no, 262)
+        self.pin = self.pwm_object.pwm
+        self.dip = dip
+        self.octaves = []    #  Octaves starting at C.  12 tone scales
+        self.octaves.append([262,277,294,311,330,349,370,392,415,440,466,494])  #     C, C#, D, D#, E, F, F#, G, G#, A, B♭, B
+    def play_note(self, octave, note, milliseconds):  #  milliseconds = 0 is continuous until note_off()
+        if ((self.dip != None) and (self.dip.get() == 'ON')):   #  Note suppressed
+            return
+        octave_index = octave - 1
+        if octave_index > len (self.octaves) - 1:
+            octave_index = 0
+        if octave_index < 0:
+            octave_index = 0
+        note_index = note - 1
+        if note_index > len (self.octaves[octave_index]) - 1:
+            note_index = 0
+        if note_index < 0:
+            note_index = 0
         self.pin.duty_u16(1000)
+        frequency = self.octaves[octave_index][note_index]
+        #print (frequency)
         self.pin.freq(frequency)
-    def be_quiet(self):
+        if milliseconds > 0:
+            utime.sleep_ms(milliseconds)
+            self.note_off()
+    def note_off(self):
         self.pin.duty_u16(0)
-    def play_song(self, mysong):
-        for i in range(len(mysong)):
-            if (mysong[i] == "P"):
-                self.be_quiet()
-            else:
-                self.play_tone(self.tones[mysong[i]])
-            utime.sleep_ms(300)
-        self.be_quiet()
+    def play_beep(self):
+        self.play_note(1, 2, 600)
+    def play_ringtone(self):
+        song = []
+        song.append([3,700])
+        song.append([6,300])
+        song.append([3,400])
+        song.append([9,800])
+        for note in song:
+            self.play_note(1, note[0], note[1])
+    def close(self):
+        self.note_off()
+        self.pwm_object.close()
+
     
+class GPIOServo(GPIO):
+    def __init__(self, name, pin_no: int=15, hertz: int=50):
+        super().__init__(name, 'SERVO', pin_no)
+        self.hertz = hertz
+        self.pin = machine.PWM(machine.Pin(pin_no))
+        self.pin.freq(hertz)
+    
+    #duty = 1638 = 0.5ms = 65535/2/(T)(1/50)/2*1000
+    def ServoDuty(self, duty): 
+        if duty <= 1638:              
+            duty = 1638
+        if duty >= 8190:
+            duty = 8190
+        self.pin.duty_u16(duty)
+        
+    def ServoAngle(self, pos): 
+        if pos <= 0:
+            pos = 0
+        if pos >= 180:
+            pos = 180
+        pos_buffer = (pos/180) * 6552
+        self.pin.duty_u16(int(pos_buffer) + 1638)
+
+    def ServoTime(self, us):
+        if us <= 500:
+            us = 500
+        if us >= 2500:
+            us = 2500
+        pos_buffer= (us / 1000) * 3276
+        self.pin.duty_u16(int(pos_buffer))
+        
+    def close(self):
+        self.pin.deinit()
+        super().close()
+        
+######################  Compound Objects  ###########################
 
 class FIT0441Motor(ColObjects.Motor):
     def __init__(self, name, direction_pin_no, speed_pin_no, pulse_pin_no):
@@ -287,97 +438,6 @@ class L298NMotor(ColObjects.Motor):
         self.anti_pin_GPIO.close()
         super().close()
 
-class Sensor(GPIO):
-    def __init__(self, name, type_code, pin_no):
-        super().__init__(name, type_code, pin_no)
-        self.state = 'UNKNOWN'
-
-class ControlPin(Sensor):
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'CONTROL', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_DOWN)
-    def get(self):
-        return self.pin.value()
-
-class Button(Sensor):
-    
-    button_list = []
-    
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'BUTTON', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.latched = False
-        Button.button_list.append(self)
-        
-    def get(self):
-        if self.pin.value() == 0:
-            self.state = 'ON'
-            self.latched = True
-        elif self.pin.value() == 1:
-            self.state = 'OFF'
-        else:
-            self.state = 'UNKNOWN'
-        return self.state
-    
-    def wait(self, seconds=100, LED=None):
-        flash_iterations = 100
-        flip_flop = True
-        loops = seconds * 1000
-        for i in range(loops):   #  wait maximum of 100 seconds
-            if LED is not None:
-                if i % flash_iterations == 0:
-                    if flip_flop:
-                        LED.on()
-                    else:
-                        LED.off()
-                    flip_flop = not flip_flop
-            response = self.get()
-            if self.latched:
-                self.latched = False
-                if LED is not None:
-                    LED.off()
-                return True
-            utime.sleep_ms(1)
-        if LED is not None:
-            LED.off()
-        return False
-        
-
-class Volts(Sensor):
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'VOLTS', pin_no)
-        self.pin = machine.ADC(pin_no)
-        self.warning_level = 5.0
-        self.volts = 0.0
-        self.state = 'UNKNOWN'
-    
-    def read(self):
-        conversion_factor = 0.000164
-        raw = self.pin.read_u16()
-        self.volts = raw * conversion_factor
-        return self.volts
-    
-    def get(self):
-        volts = self.read()
-        if volts < self.warning_level:
-            self.state = 'OFF'
-        else:
-            self.state = 'ON'
-        return self.state
-
-class USTrigger(Sensor):
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'US_TRIGGER', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.OUT)
-        self.valid = True
-
-class USEcho(Sensor):    
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'US_ECHO', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.IN)
-        self.valid = True
-
-
 class HCSR04(ColObjects.ColObj):
     def __init__(self,
                  name,
@@ -442,148 +502,16 @@ class HCSR04(ColObjects.ColObj):
         self.echo_object.close()
         super().close()
 
-class IRSensor(Sensor):
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'INFRA_RED', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.type = 'IR'
-    
-    def get(self):
-        if self.pin.value() == 0:
-            self.state = 'ON'
-        elif self.pin.value() == 1:
-            self.state = 'OFF'
-        else:
-            self.state = 'UNKNOWN'
-        return self.state
-
-class Switch(Sensor):
-    
-    switch_list = []
-    
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'SWITCH', pin_no)
-        self.pin = machine.Pin(self.pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
-        Switch.switch_list.append(self)
-    
-    def get(self):
-        if self.pin.value() == 0:
-            self.state = 'ON'
-        elif self.pin.value() == 1:
-            self.state = 'OFF'
-        else:
-            self.state = 'UNKNOWN'
-        return self.state
-
-
-class LED(Output):
-    def __init__(self, name, pin_no):
-        super().__init__(name, 'LED', pin_no)
-    
-    def on(self):
-        self.pin.on()
-        
-    def off(self):
-        self.pin.off()
-
-class RGBLED(ColObjects.ColObj):
-    def __init__(self, name, red_led, green_led, blue_led):
-        response = super().__init__(name)
-        self.red_led = red_led
-        self.green_led = green_led
-        self.blue_led = blue_led
-        
-    def on(self):
-        self.red_led.on()
-        self.green_led.on()
-        self.blue_led.on()
-
-    def red(self):
-        self.red_led.on()
-        self.green_led.off()
-        self.blue_led.off()
-
-    def green(self):
-        self.red_led.off()
-        self.green_led.on()
-        self.red_led.off()
-
-    def blue(self):
-        self.red_led.off()
-        self.green_led.off()
-        self.blue_led.on()
-
-    def purple(self):
-        self.red_led.on()
-        self.green_led.off()
-        self.blue_led.on()
-
-    def orange(self):
-        self.red_led.on()
-        self.green_led.on()
-        self.blue_led.off()
-
-    def off(self):
-        self.red_led.off()
-        self.green_led.off()
-        self.blue_led.off()
-        
-    def close(self):
-        self.off()
-        self.red_led.close()
-        self.green_led.close()
-        self.blue_led.close()
-        
-
-class GPIOServo(GPIO):
-    def __init__(self, name, pin_no: int=15, hertz: int=50):
-        super().__init__(name, 'SERVO', pin_no)
-        self.hertz = hertz
-        self.pin = machine.PWM(machine.Pin(pin_no))
-        self.pin.freq(hertz)
-    
-    #duty = 1638 = 0.5ms = 65535/2/(T)(1/50)/2*1000
-    def ServoDuty(self, duty): 
-        if duty <= 1638:              
-            duty = 1638
-        if duty >= 8190:
-            duty = 8190
-        self.pin.duty_u16(duty)
-        
-    def ServoAngle(self, pos): 
-        if pos <= 0:
-            pos = 0
-        if pos >= 180:
-            pos = 180
-        pos_buffer = (pos/180) * 6552
-        self.pin.duty_u16(int(pos_buffer) + 1638)
-
-    def ServoTime(self, us):
-        if us <= 500:
-            us = 500
-        if us >= 2500:
-            us = 2500
-        pos_buffer= (us / 1000) * 3276
-        self.pin.duty_u16(int(pos_buffer))
-        
-    def close(self):
-        self.pin.deinit()
-        super().close()
-        
-
-class Reserved(GPIO):
-    def __init__(self, name, type_code, pin_no):
-        super().__init__(name, type_code, pin_no)
 
 if __name__ == "__main__":
     print (module_name)
-    print ('Normally reserved:')
     uart_tx = Reserved('UART TX', 'OUTPUT', 0)
     uart_rx = Reserved('UART RX', 'INPUT', 1)
     smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
     vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
     onboard_led = LED('Onboard LED', 25)
     onboard_volts = Volts('Onboard Voltmeter', 29)
+    print ('Normally reserved:')
     print (GPIO.str_allocated())
 
 
