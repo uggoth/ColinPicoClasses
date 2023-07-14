@@ -1,9 +1,14 @@
-module_name = 'GPIOPico_v27.py'
-creation_date = '202302060808'
+module_name = 'GPIOPico_V29.py'
+creation_date = '202307101115'
 
-import ColObjects_v12 as ColObjects
+if __name__ == "__main__":
+    print (module_name, 'starting')
+
+import ColObjects_V14 as ColObjects
 import machine
 import utime
+import sbus_receiver_3 as sbus_receiver
+import _thread
 
 #GPIO class reference:
 #   GPIO
@@ -15,6 +20,7 @@ import utime
 #         Switch
 #         USEcho
 #         Volts
+#         SBUS Receiver
 #      DigitalOutput
 #         LED
 #         USTrigger
@@ -69,6 +75,7 @@ class GPIO(ColObjects.ColObj):
                         'BUZZER':'OUTPUT',
                         'US_TRIGGER':'OUTPUT',
                         'US_ECHO':'INPUT',
+                        'SBUS':'INPUT',
                         'SWITCH':'INPUT',
                         'VOLTS':'INPUT',
                         'ADC':'INPUT',
@@ -330,114 +337,6 @@ class GPIOServo(GPIO):
         
 ######################  Compound Objects  ###########################
 
-class FIT0441Motor(ColObjects.Motor):
-    def __init__(self, name, direction_pin_no, speed_pin_no, pulse_pin_no):
-        super().__init__(name)
-        self.direction_pin_GPIO = GPIO(pin_no=direction_pin_no, type_code='MOTOR', name=name+'_direction_'+str(direction_pin_no))
-        self.direction_pin = machine.Pin(direction_pin_no, machine.Pin.OUT)
-        self.speed_pin_GPIO = GPIO(pin_no=speed_pin_no, type_code='MOTOR', name=name+'_speed_'+str(speed_pin_no))
-        self.speed_pin = machine.PWM(machine.Pin(speed_pin_no))
-        self.pulse_pin_GPIO = GPIO(pin_no=pulse_pin_no, type_code='MOTOR', name=name+'_pulse_'+str(pulse_pin_no))
-        self.pulse_pin = machine.Pin(pulse_pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.pulse_pin.irq(self.pulse_detected)
-        self.pulse_count = 0
-        self.pulse_checkpoint = 0
-        self.duty = 0
-        self.stop_duty = 65534
-        self.min_speed_duty = 59000
-        self.max_speed_duty = 0
-        self.clockwise = 1
-        self.anticlockwise = 0
-
-    def clk(self, speed):
-        self.direction_pin.value(self.clockwise)
-        self.set_speed(speed)
-
-    def anti(self, speed):
-        self.direction_pin.value(self.anticlockwise)
-        self.set_speed(speed)
-
-    def set_pulse_checkpoint(self):
-        self.pulse_checkpoint = self.get_pulses()
-
-    def get_pulse_checkpoint(self):
-        return self.pulse_checkpoint
-
-    def get_pulse_diff(self):
-        return self.get_pulses() - self.pulse_checkpoint
-
-    def deinit(self):
-        self.speed_pin.deinit()
-
-    def stop(self):
-        duty = self.stop_duty
-        self.speed_pin.duty_u16(duty)
-        utime.sleep_ms(1)
-        
-    def close(self):
-        self.deinit()
-        utime.sleep_ms(5)
-        super().close()
-
-    def pulse_detected(self, sender):
-        self.pulse_count += 1
-
-    def get_pulses(self):
-        return self.pulse_count
-
-    def set_speed(self, speed):  #  as a percentage
-        self.duty = (self.min_speed_duty
-                     - int(float(self.min_speed_duty - self.max_speed_duty)
-                        * (float(speed) / 100.0)))
-        self.speed_pin.duty_u16(self.duty)
-    
-    def set_direction(self, direction):  # 1 = clockwise, 0 = anticlockwise
-        if direction == 1:
-            self.direction_pin.value(self.clockwise)
-        elif direction == 0:
-            self.direction_pin.value(self.anticlockwise)
-
-class L298NMotor(ColObjects.Motor):
-    def __init__(self, name, clk_pin_no, anti_pin_no):
-        super().__init__(name)
-        #  clk is clockwise looking at the motor from the wheel side
-        self.stop_duty = 0
-        self.max_speed = 100  #  as an integer percentage
-        self.min_speed = 0
-        self.min_speed_duty = 0
-        self.max_speed_duty = 65534
-        self.speed = self.min_speed
-        self.freq = 25000
-        self.clk_pin_GPIO = GPIO(pin_no=clk_pin_no, type_code='MOTOR', name=name+'_clk_'+str(clk_pin_no))
-        self.clk_pin = machine.Pin(clk_pin_no)
-        self.clk_PWM = machine.PWM(self.clk_pin)
-        self.clk_PWM.freq(self.freq)
-        self.clk_PWM.duty_u16(self.stop_duty)
-        self.anti_pin_GPIO = GPIO(pin_no=anti_pin_no, type_code='MOTOR', name=name+'_anti_'+str(anti_pin_no))
-        self.anti_pin = machine.Pin(anti_pin_no)
-        self.anti_PWM = machine.PWM(self.anti_pin)
-        self.anti_PWM.freq(self.freq)
-        self.anti_PWM.duty_u16(self.stop_duty)
-    def convert_speed_to_duty(self, speed):
-        duty = int((self.max_speed_duty - self.min_speed_duty) / 100 * speed)
-        return duty
-    def clk(self, speed):
-        self.anti_PWM.duty_u16(self.stop_duty)
-        self.clk_PWM.duty_u16(self.convert_speed_to_duty(speed))
-    def anti(self, speed):
-        self.clk_PWM.duty_u16(self.stop_duty)
-        self.anti_PWM.duty_u16(self.convert_speed_to_duty(speed))
-    def stop(self):
-        self.clk_PWM.duty_u16(self.stop_duty)
-        self.anti_PWM.duty_u16(self.stop_duty)
-    def close(self):
-        self.clk_PWM.deinit()
-        self.anti_PWM.deinit()
-        utime.sleep_ms(5)
-        self.clk_pin_GPIO.close()
-        self.anti_pin_GPIO.close()
-        super().close()
-
 class HCSR04(ColObjects.ColObj):
     def __init__(self,
                  name,
@@ -502,16 +401,86 @@ class HCSR04(ColObjects.ColObj):
         self.echo_object.close()
         super().close()
 
+class SBusReceiver(ColObjects.ColObj):
+    def __init__(self, tx_pin_no, rx_pin_no, uart_no, throttle_interpolator, steering_interpolator, baud_rate = 100000):
+        super().__init__('MicroZone Remote','SBus Remote')
+        self.tx_pin_no = 0
+        self.rx_pin_no = 1
+        self.uart_no = 0
+        self.baud_rate = baud_rate
+        self.uart_tx = DigitalOutput('UART TX', 'SBUS', tx_pin_no)
+        self.uart_rx = DigitalInput('UART RX', 'SBUS', rx_pin_no)
+        self.uart = machine.UART(uart_no, baud_rate, tx = machine.Pin(tx_pin_no), rx = machine.Pin(rx_pin_no), bits=8, parity=0, stop=2)
+        self.sbus = sbus_receiver.SBUSReceiver(self.uart)
+        self.thread_enable = True
+        self.joystick_raws = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        self.thread_running = False
+        self.thread = None
+        self.throttle_interpolator = throttle_interpolator
+        self.steering_interpolator = steering_interpolator
+
+    def __str__(self):
+        outstring = self.name + '  ' + self.description
+        outstring += ',  UART: ' + str(self.uart_no)
+        outstring += ',  TX pin ' + str(self.tx_pin_no)
+        outstring += ',  RX pin ' + str(self.rx_pin_no)
+        return outstring
+
+    def thread_1_code(self):
+        self.thread_running = True
+        while True:
+            if not self.thread_enable:
+                break
+            utime.sleep_us(300)
+            self.sbus.get_new_data()
+            self.joystick_raws = self.sbus.get_rx_channels()[0:5]
+        self.thread_running = False
+
+    def run_thread(self):
+        self.thread = _thread.start_new_thread(self.thread_1_code, ())
+
+    def stop_thread(self):
+        self.thread_enable = False
+
+    def get(self):
+        steering_raw = self.joystick_raws[0]
+        throttle_raw = self.joystick_raws[2]
+        throttle_value = self.throttle_interpolator.interpolate(throttle_raw)
+        steering_value = self.steering_interpolator.interpolate(steering_raw)
+        return throttle_raw, throttle_value, steering_raw, steering_value
+        
+    def close(self):
+        self.stop_thread()
+        self.uart_tx.close()
+        self.uart_rx.close()
+        super().close()
 
 if __name__ == "__main__":
     print (module_name)
-    uart_tx = Reserved('UART TX', 'OUTPUT', 0)
-    uart_rx = Reserved('UART RX', 'INPUT', 1)
     smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
     vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
     onboard_led = LED('Onboard LED', 25)
     onboard_volts = Volts('Onboard Voltmeter', 29)
     print ('Normally reserved:')
     print (GPIO.str_allocated())
-
-
+    tx_pin_no = 0
+    rx_pin_no = 1
+    uart_no = 0
+    throttle_interpolator = ColObjects.Interpolator('Throttle Interpolator',
+                            [100, 201, 1000, 1090, 1801, 2000], [-100.0, -100.0, 0.0, 0.0, 100.0, 100.0])
+    steering_interpolator = ColObjects.Interpolator('Steering Interpolator',
+                            [100, 393, 1180, 1220, 1990, 2000], [100.0, 100.0, 0.0, 0.0, -100.0, -100.0])
+    test_sbus = SBusReceiver(tx_pin_no, rx_pin_no, uart_no, throttle_interpolator, steering_interpolator)
+    print (test_sbus)
+    print ('--- INSTANTIATED --')
+    print (ColObjects.ColObj.str_allocated())
+    smps_mode.close()
+    vbus_monitor.close()
+    onboard_led.close()
+    onboard_volts.close()
+    test_sbus.close()
+    throttle_interpolator.close()
+    steering_interpolator.close()
+    print ('--- AFTER CLOSE --')
+    print (ColObjects.ColObj.str_allocated())
+    print (module_name, 'finished')

@@ -1,12 +1,12 @@
-module_name = 'NeoPixel_v11.py'   #  14/Jan/2023
+module_name = 'NeoPixel_v12.py'   #  12/Jul/2023
 
-import GPIOPico_v26 as GPIOPico
+import GPIOPico_V29 as GPIOPico
 ColObjects = GPIOPico.ColObjects
 import neopixel
 import machine
 import utime
 
-class NeoPixel(GPIOPico.Output):
+class NeoPixel(GPIOPico.DigitalOutput):
     def __init__(self, name, pin_no, no_pixels, mode):
         super().__init__(name, 'NEOPIXEL', pin_no)
         self.valid = False
@@ -83,7 +83,7 @@ class NeoPixel(GPIOPico.Output):
 
 if __name__ == "__main__":
     print (module_name)
-    dummy = NeoPixel('TEST', 7, 4, 'GRB')
+    dummy = NeoPixel('TEST', 18, 4, 'GRB')
     dummy.on()
     print (ColObjects.PIO.str_allocated())
     utime.sleep(2)
