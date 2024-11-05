@@ -1,5 +1,5 @@
-module_name = 'GPIOPico_V30.py'
-creation_date = '202307141208'
+module_name = 'GPIOPico_V31.py'
+creation_date = '202411021528'
 
 if __name__ == "__main__":
     print (module_name, 'starting')
@@ -7,8 +7,6 @@ if __name__ == "__main__":
 import ColObjects_V16 as ColObjects
 import machine
 import utime
-import sbus_receiver_3 as sbus_receiver
-import _thread
 
 #GPIO class reference:
 #   GPIO
@@ -401,86 +399,5 @@ class HCSR04(ColObjects.ColObj):
         self.echo_object.close()
         super().close()
 
-class SBusReceiver(ColObjects.ColObj):
-    def __init__(self, tx_pin_no, rx_pin_no, uart_no, throttle_interpolator, steering_interpolator, baud_rate = 100000):
-        super().__init__('MicroZone Remote','SBus Remote')
-        self.tx_pin_no = 0
-        self.rx_pin_no = 1
-        self.uart_no = 0
-        self.baud_rate = baud_rate
-        self.uart_tx = DigitalOutput('UART TX', 'SBUS', tx_pin_no)
-        self.uart_rx = DigitalInput('UART RX', 'SBUS', rx_pin_no)
-        self.uart = machine.UART(uart_no, baud_rate, tx = machine.Pin(tx_pin_no), rx = machine.Pin(rx_pin_no), bits=8, parity=0, stop=2)
-        self.sbus = sbus_receiver.SBUSReceiver(self.uart)
-        self.thread_enable = True
-        self.joystick_raws = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-        self.thread_running = False
-        self.thread = None
-        self.throttle_interpolator = throttle_interpolator
-        self.steering_interpolator = steering_interpolator
-
-    def __str__(self):
-        outstring = self.name + '  ' + self.description
-        outstring += ',  UART: ' + str(self.uart_no)
-        outstring += ',  TX pin ' + str(self.tx_pin_no)
-        outstring += ',  RX pin ' + str(self.rx_pin_no)
-        return outstring
-
-    def thread_1_code(self):
-        self.thread_running = True
-        while True:
-            if not self.thread_enable:
-                break
-            utime.sleep_us(300)
-            self.sbus.get_new_data()
-            self.joystick_raws = self.sbus.get_rx_channels()[0:5]
-        self.thread_running = False
-
-    def run_thread(self):
-        self.thread = _thread.start_new_thread(self.thread_1_code, ())
-
-    def stop_thread(self):
-        self.thread_enable = False
-
-    def get(self):
-        steering_raw = self.joystick_raws[0]
-        throttle_raw = self.joystick_raws[2]
-        throttle_value = self.throttle_interpolator.interpolate(throttle_raw)
-        steering_value = self.steering_interpolator.interpolate(steering_raw)
-        return throttle_raw, throttle_value, steering_raw, steering_value
-        
-    def close(self):
-        self.stop_thread()
-        self.uart_tx.close()
-        self.uart_rx.close()
-        super().close()
-
 if __name__ == "__main__":
-    print (module_name)
-    smps_mode = Reserved('SMPS Mode', 'OUTPUT', 23)
-    vbus_monitor = Reserved('VBUS Monitor','INPUT',24)
-    onboard_led = LED('Onboard LED', 25)
-    onboard_volts = Volts('Onboard Voltmeter', 29)
-    print ('Normally reserved:')
-    print (GPIO.str_allocated())
-    tx_pin_no = 0
-    rx_pin_no = 1
-    uart_no = 0
-    throttle_interpolator = ColObjects.Interpolator('Throttle Interpolator',
-                            [100, 201, 1000, 1090, 1801, 2000], [-100.0, -100.0, 0.0, 0.0, 100.0, 100.0])
-    steering_interpolator = ColObjects.Interpolator('Steering Interpolator',
-                            [100, 393, 1180, 1220, 1990, 2000], [100.0, 100.0, 0.0, 0.0, -100.0, -100.0])
-    test_sbus = SBusReceiver(tx_pin_no, rx_pin_no, uart_no, throttle_interpolator, steering_interpolator)
-    print (test_sbus)
-    print ('--- INSTANTIATED --')
-    print (ColObjects.ColObj.str_allocated())
-    smps_mode.close()
-    vbus_monitor.close()
-    onboard_led.close()
-    onboard_volts.close()
-    test_sbus.close()
-    throttle_interpolator.close()
-    steering_interpolator.close()
-    print ('--- AFTER CLOSE --')
-    print (ColObjects.ColObj.str_allocated())
     print (module_name, 'finished')
